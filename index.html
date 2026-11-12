@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>บันทึกสุขภาพ</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600&display=swap">
+<style>
+:root{--bg:#f3f6f7;--sf:#fff;--ink:#14262b;--mut:#62767c;--ln:#dbe4e6;--ac:#0e6b70;--hi:#b3402b;--his:#fbe7e2;--lo:#2b5fa6;color-scheme:light;padding:env(safe-area-inset-top,0) 0 env(safe-area-inset-bottom,0)}
+@media(prefers-color-scheme:dark){:root{--bg:#0f1b1e;--sf:#16272b;--ink:#e6f0f1;--mut:#92a8ad;--ln:#26393d;--ac:#5cc3c8;--hi:#ff9d86;--his:#3b1f19;--lo:#8db8f2;color-scheme:dark}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 "IBM Plex Sans Thai",system-ui,sans-serif}
+.w{max-width:860px;margin:auto;padding:14px}
+.card{background:var(--sf);border:1px solid var(--ln);border-radius:12px;padding:14px;margin:0 0 12px}
+h1{font-size:20px;margin:0 0 8px}h2{font-size:16px;margin:4px 0 8px}
+input,select,textarea,button{font:inherit;padding:9px;border-radius:8px;border:1px solid var(--ln);background:var(--sf);color:var(--ink);width:100%;margin:4px 0}
+input[type=checkbox]{width:auto}
+button{background:var(--ac);color:var(--bg);border:0;font-weight:500;cursor:pointer}
+button.g{background:var(--sf);color:var(--ink);border:1px solid var(--ln)}
+button:disabled{opacity:.5}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.row>*{flex:1;min-width:130px}
+.big{padding:26px 10px;font-size:17px}
+.e{color:var(--hi)}.m{color:var(--mut);font-size:13px}.bad{background:var(--his)}
+table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:4px;border-top:1px solid var(--ln);text-align:left;vertical-align:top}td select{padding:3px;margin:0;min-width:96px}
+.sc{overflow-x:auto}.H{color:var(--hi);font-weight:600}.L{color:var(--lo);font-weight:600}
+textarea{min-height:150px;font:12px ui-monospace,monospace}
+pre{white-space:pre-wrap;margin:4px 0}label{display:block;font-size:13px;color:var(--mut)}
+:focus-visible{outline:2px solid var(--ac);outline-offset:2px}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.57.4/dist/umd/supabase.js"></script>
+<script src="config.js"></script>
+<script>
+const sb=supabase.createClient(CFG.url,CFG.key);
+const $=s=>document.querySelector(s),app=$("#app"),S={people:[],codes:[],person:null};
+const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const h=x=>{app.innerHTML=x},toast=m=>alert(m);
+const fd=d=>new Date(d+"T00:00:00").toLocaleDateString("th-TH",{day:"numeric",month:"short",year:"numeric"});
+const box=(t,b)=>h(`<div class="w"><div class="card"><h1>${t}</h1>${b}</div></div>`);
+const pick=(x,ks)=>Object.fromEntries(ks.map(k=>[k,x[k]??null]));
+const ins=async(t,rows)=>{if(rows.length){const r=await sb.from(t).insert(rows);if(r.error)throw r.error}};
+const out=async()=>{await sb.auth.signOut();boot()};
+/*V*/
+function validate(o,codes,f){
+ const errs=[],warns=[],num=v=>v===null||v===undefined||typeof v==="number";
+ if(!o||!Array.isArray(o.checkups)||!o.checkups.length)return{errs:["ไม่พบ checkups ใน JSON"],warns,cks:[]};
+ if(o.schema_version!==2)warns.push("schema_version ไม่ใช่ 2");
+ (o.warnings||[]).forEach(w=>warns.push("AI: "+w));
+ const cv=o.coverage;
+ if(cv){if(cv.images_received!==f.n)warns.push(`AI นับรูปได้ ${cv.images_received} แต่คุณแนบ ${f.n}`);if((cv.images_without_data||[]).length)warns.push("รูปที่ไม่มีข้อมูล: "+cv.images_without_data.join(", "))}
+ else warns.push("ไม่มี coverage จึงตรวจจำนวนรูปไม่ได้");
+ const one=o.checkups.length===1;
+ if(!one)warns.push(`AI แยกเป็น ${o.checkups.length} วัน ใช้วันที่ตามที่ AI ระบุ ตรวจให้ดี`);
+ const cks=o.checkups.map((c,i)=>{
+  const date=one?f.date:c.checkup_date;
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(date||""))errs.push(`ครั้งที่ ${i+1}: วันที่ไม่ถูกต้อง`);
+  if(one&&c.checkup_date&&c.checkup_date!==f.date)warns.push(`วันที่ใน JSON (${c.checkup_date}) ต่างจากที่กรอก ใช้ตามที่กรอก`);
+  const obs=(c.observations||[]).map((x,j)=>{
+   if(!x.name_raw)errs.push(`รายการที่ ${j+1} ไม่มีชื่อ`);
+   if(!num(x.value_num)||!num(x.ref_low)||!num(x.ref_high))errs.push(`${x.name_raw}: ค่าที่ควรเป็นตัวเลขไม่ใช่ตัวเลข`);
+   if(x.value_num==null&&x.value_text==null)errs.push(`${x.name_raw}: ไม่มีค่า`);
+   if(x.code&&!codes.has(x.code)){warns.push(`${x.name_raw}: รหัส ${x.code} ไม่อยู่ในรายการ (ปล่อยว่าง เลือกเองได้)`);x={...x,code:null}}
+   return x});
+  return{date,hospital:f.hosp,dept:f.dept||c.department||null,summary_th:c.summary_th||null,note:c.note||null,obs,reports:c.reports||[],exam:c.exam_findings||[],fups:c.followups||[]}});
+ return{errs,warns,cks}}
+/*E*/
+async function boot(){
+ const{data:{session}}=await sb.auth.getSession();
+ if(!session)return loginView();
+ if(!session.user.user_metadata?.pw_changed)return pwView(true);
+ const{data:f}=await sb.auth.mfa.listFactors();
+ const t=(f?.totp||[]).filter(x=>x.status==="verified");
+ if(!t.length)return enrollView();
+ const{data:a}=await sb.auth.mfa.getAuthenticatorAssuranceLevel();
+ if(a.currentLevel!=="aal2")return challengeView(t[0].id);
+ await load();homeView()}
+function loginView(m=""){
+ box("เข้าสู่ระบบ",`<p class="e">${m}</p><input id="em" type="email" placeholder="อีเมล" autocomplete="username"><input id="pw" type="password" placeholder="รหัสผ่าน" autocomplete="current-password"><button id="go">เข้าสู่ระบบ</button>`);
+ $("#go").onclick=async()=>{const{error}=await sb.auth.signInWithPassword({email:$("#em").value.trim(),password:$("#pw").value});error?loginView("อีเมลหรือรหัสผ่านไม่ถูกต้อง"):boot()}}
+function pwView(first){
+ box("ตั้งรหัสผ่านใหม่",`<p class="m">${first?"เข้าครั้งแรก ต้องเปลี่ยนรหัสผ่านชั่วคราวก่อน ":""}รหัสผ่านยาวอย่างน้อย 12 ตัว</p><p class="e" id="er"></p><input id="p1" type="password" placeholder="รหัสผ่านใหม่" autocomplete="new-password"><input id="p2" type="password" placeholder="พิมพ์ซ้ำ" autocomplete="new-password"><button id="go">บันทึก</button>${first?"":'<button class="g" id="cn">ยกเลิก</button>'}`);
+ if(!first)$("#cn").onclick=boot;
+ $("#go").onclick=async()=>{const a=$("#p1").value;if(a.length<12||a!==$("#p2").value)return $("#er").textContent="ต้องยาว 12 ตัวขึ้นไป และพิมพ์ซ้ำให้ตรงกัน";const{error}=await sb.auth.updateUser({password:a,data:{pw_changed:true}});error?$("#er").textContent=error.message:boot()}}
+async function enrollView(){
+ const{data:f}=await sb.auth.mfa.listFactors();
+ for(const x of(f?.all||[]).filter(x=>x.status!=="verified"))await sb.auth.mfa.unenroll({factorId:x.id});
+ const{data,error}=await sb.auth.mfa.enroll({factorType:"totp",friendlyName:"app-"+Date.now()});
+ if(error)return box("ผิดพลาด",esc(error.message));
+ box("ตั้งค่ายืนยันตัวตนสองขั้น (2FA)",`<p>สแกน QR ด้วยแอปยืนยันตัวตน (Google Authenticator, Authy, 1Password ฯลฯ) แล้วใส่รหัส 6 หลัก</p><img src="${data.totp.qr_code}" width="200" alt="QR"><p class="m">ใส่เองแทนการสแกน: <code>${esc(data.totp.secret)}</code> (เก็บไว้ที่ปลอดภัย)</p><p class="e" id="er"></p><input id="cd" inputmode="numeric" maxlength="6" placeholder="รหัส 6 หลัก"><button id="go">ยืนยัน</button>`);
+ $("#go").onclick=async()=>{const{error}=await sb.auth.mfa.challengeAndVerify({factorId:data.id,code:$("#cd").value.trim()});error?$("#er").textContent="รหัสไม่ถูกต้อง":boot()}}
+function challengeView(id){
+ box("ยืนยัน 2FA",`<p class="e" id="er"></p><input id="cd" inputmode="numeric" maxlength="6" placeholder="รหัส 6 หลักจากแอป" autocomplete="one-time-code"><button id="go">ยืนยัน</button><button class="g" id="lo">ออกจากระบบ</button>`);
+ $("#go").onclick=async()=>{const{error}=await sb.auth.mfa.challengeAndVerify({factorId:id,code:$("#cd").value.trim()});error?$("#er").textContent="รหัสไม่ถูกต้อง":boot()};$("#lo").onclick=out}
+async function load(){
+ const u=(await sb.auth.getUser()).data.user;
+ const[p,c]=await Promise.all([sb.from("people").select("id,nickname,account_id").order("nickname"),sb.from("test_codes").select("code,name_en,std_unit").order("category").order("code")]);
+ S.people=p.data||[];S.codes=c.data||[];
+ if(!S.people.find(x=>x.id===S.person))S.person=(S.people.find(x=>x.account_id===u.id)||S.people[0])?.id}
+function shell(b){
+ h(`<div class="w"><div class="row" style="margin-bottom:10px"><select id="ps">${S.people.map(p=>`<option value="${p.id}" ${p.id===S.person?"selected":""}>${esc(p.nickname)}</option>`).join("")}</select><button class="g" id="hm">หน้าแรก</button><button class="g" id="pw">เปลี่ยนรหัสผ่าน</button><button class="g" id="lo">ออก</button></div>${b}</div>`);
+ $("#ps").onchange=e=>{S.person=e.target.value;homeView()};$("#hm").onclick=homeView;$("#pw").onclick=()=>pwView(false);$("#lo").onclick=out}
+function homeView(){
+ shell(`<div class="row"><button class="big" id="b1">ดูข้อมูลย้อนหลัง</button><button class="big" id="b2">นำเข้าข้อมูลใหม่</button></div>`);
+ $("#b1").onclick=histView;$("#b2").onclick=importView}
+let I={};
+async function importView(){
+ const{data:hs}=await sb.from("checkups").select("hospital").eq("person_id",S.person).limit(300);
+ const hl=[...new Set((hs||[]).map(x=>x.hospital).filter(Boolean))];
+ shell(`<div class="card"><h2>1) เตรียมพรอมต์</h2><div class="row"><div><label>วันที่ตรวจ</label><input id="d" type="date"></div><div><label>โรงพยาบาล</label><input id="ho" list="hl"><datalist id="hl">${hl.map(x=>`<option value="${esc(x)}">`).join("")}</datalist></div></div><div class="row"><div><label>แผนก/ชุดตรวจ (ไม่บังคับ)</label><input id="dp"></div><div><label>ชนิดไฟล์</label><select id="ft"><option>กระดาษถ่ายรูป</option><option>สกรีนช็อตแอปรพ.</option><option>PDF</option></select></div><div><label>จำนวนรูปที่แนบ</label><input id="n" type="number" min="1"></div></div><label>หมายเหตุ (ไม่บังคับ)</label><input id="nt"><button id="cp">คัดลอกพรอมต์</button><p class="m">วางในแชต AI พร้อมรูปที่ปิดชื่อ เลขบัตร HN บาร์โค้ดแล้ว</p></div><div class="card"><h2>2) วาง JSON ที่ AI ตอบ</h2><textarea id="js"></textarea><button id="ck">ตรวจ JSON</button></div><div id="pv"></div>`);
+ $("#cp").onclick=copyPrompt;$("#ck").onclick=checkJson}
+const form=()=>({date:$("#d").value,hosp:$("#ho").value.trim(),dept:$("#dp").value.trim(),ft:$("#ft").value,n:+$("#n").value,note:$("#nt").value.trim()});
+async function copyPrompt(){
+ const f=form();if(!f.date||!f.hosp||!f.n)return toast("กรอกวันที่ โรงพยาบาล และจำนวนรูปก่อน");
+ const{data}=await sb.from("app_config").select("value").eq("key","prompt").maybeSingle();
+ if(!data)return toast("ยังไม่มีพรอมต์ในระบบ (ตาราง app_config)");
+ const ctx=`- วันที่ตรวจ: ${f.date}\n- โรงพยาบาล: ${f.hosp}\n- แผนก/ชุดตรวจ: ${f.dept||"ไม่ระบุ"}\n- ชนิดไฟล์: ${f.ft}\n- จำนวนรูปที่แนบ: ${f.n}\n- หมายเหตุ: ${f.note||"ไม่มี"}`;
+ const list=S.codes.map(c=>`${c.code} — ${c.name_en}${c.std_unit?" — "+c.std_unit:""}`).join("\n");
+ const t=data.value.replace("{{CONTEXT}}",()=>ctx).replace("{{CODE_LIST}}",()=>list);
+ try{await navigator.clipboard.writeText(t);toast("คัดลอกพรอมต์แล้ว")}
+ catch{$("#pv").innerHTML=`<div class="card"><p class="m">คัดลอกอัตโนมัติไม่ได้ เลือกข้อความด้านล่างแล้วคัดลอกเอง</p><textarea id="tx"></textarea></div>`;$("#tx").value=t;$("#tx").select()}}
+function checkJson(){
+ const f=form();if(!f.date||!f.hosp||!f.n)return toast("กรอกวันที่ โรงพยาบาล และจำนวนรูปก่อน");
+ let o;try{o=JSON.parse($("#js").value.trim().replace(/^```(?:json)?\s*/i,"").replace(/\s*```$/,""))}catch(e){return $("#pv").innerHTML=`<div class="card bad e">อ่าน JSON ไม่ได้: ${esc(e.message)}</div>`}
+ I={f,r:validate(o,new Set(S.codes.map(c=>c.code)),f)};preview()}
+function preview(){
+ const r=I.r;let x="";
+ if(r.errs.length)x+=`<div class="card bad"><b class="e">ต้องแก้ก่อนบันทึก (แก้ใน JSON แล้วกดตรวจใหม่)</b><ul>${r.errs.map(e=>`<li>${esc(e)}</li>`).join("")}</ul></div>`;
+ if(r.warns.length)x+=`<div class="card"><b>คำเตือน</b><ul>${r.warns.map(e=>`<li>${esc(e)}</li>`).join("")}</ul></div>`;
+ const co=`<option value="">— ไม่มีรหัส —</option>`+S.codes.map(c=>`<option value="${c.code}">${c.code}</option>`).join("");
+ r.cks.forEach((c,ci)=>{
+  x+=`<div class="card sc"><h2>${fd(c.date)} · ${esc(c.hospital)}</h2><p class="m">ติ๊กรายการที่จะบันทึก เทียบกับรูปต้นฉบับก่อนยืนยัน</p><table><tr><th></th><th>รายการ</th><th>รหัส</th><th>ค่า</th><th>หน่วย</th><th>อ้างอิง</th><th>ธง</th></tr>${c.obs.map((o,oi)=>`<tr><td><input type="checkbox" data-k="${ci}" data-o="${oi}" checked></td><td>${esc(o.name_raw)}</td><td><select data-s="${ci}-${oi}">${o.code?co.replace(`value="${o.code}"`,`value="${o.code}" selected`):co}</select></td><td>${esc(o.value_num??o.value_text)}</td><td>${esc(o.unit_raw)}</td><td>${esc(o.ref_text)}</td><td class="${o.flag_raw||""}">${esc(o.flag_raw)}</td></tr>`).join("")}</table>`;
+  x+=c.reports.map(p=>`<details><summary>รายงาน: ${esc(p.modality||p.type)} ${esc(p.body_part||"")}</summary><pre class="m">${esc(p.impression||p.findings||"")}</pre></details>`).join("");
+  x+=c.fups.map((p,i)=>`<div class="row"><label><input type="checkbox" data-f="${ci}" data-i="${i}" checked> ติดตาม: ${esc(p.title)}</label><input type="date" data-fd="${ci}-${i}" value="${p.due_date||""}"></div>`).join("")+"</div>"});
+ x+=`<div class="card"><h2>3) แนบรูปต้นฉบับ (เก็บไว้เทียบภายหลัง)</h2><input id="fl" type="file" multiple accept="image/*,application/pdf"><p class="m">รูปจะถูกย่อและตัดข้อมูลพิกัดออกก่อนอัปโหลด</p><button id="sv" ${r.errs.length?"disabled":""}>ยืนยันและบันทึก</button></div>`;
+ $("#pv").innerHTML=x;$("#sv").onclick=save}
+async function shrink(f){
+ if(f.type==="application/pdf")return{b:f,ext:"pdf",mime:f.type};
+ const b=await createImageBitmap(f),k=Math.min(1,1600/Math.max(b.width,b.height)),c=document.createElement("canvas");
+ c.width=Math.round(b.width*k);c.height=Math.round(b.height*k);c.getContext("2d").drawImage(b,0,0,c.width,c.height);
+ return{b:await new Promise(r=>c.toBlob(r,"image/jpeg",.8)),ext:"jpg",mime:"image/jpeg"}}
+async function save(){
+ const btn=$("#sv");btn.disabled=true;btn.textContent="กำลังบันทึก...";
+ try{
+  const pid=S.person,files=[...$("#fl").files];let first=null;
+  for(const[ci,c]of I.r.cks.entries()){
+   const keep=[...document.querySelectorAll(`[data-k="${ci}"]:checked`)].map(x=>+x.dataset.o);
+   const ex=await sb.from("checkups").select("id").eq("person_id",pid).eq("checkup_date",c.date).eq("hospital",c.hospital).limit(1);
+   let id=null;
+   if(ex.data?.[0]&&confirm(`มีการตรวจวันที่ ${fd(c.date)} ของ ${c.hospital} อยู่แล้ว\nตกลง = เพิ่มข้อมูลเข้าครั้งเดิม / ยกเลิก = สร้างครั้งใหม่`))id=ex.data[0].id;
+   if(!id){const r=await sb.from("checkups").insert({person_id:pid,checkup_date:c.date,hospital:c.hospital,department:c.dept,summary_th:c.summary_th,note:c.note}).select("id").single();if(r.error)throw r.error;id=r.data.id}
+   first=first||id;
+   const have=new Set(((await sb.from("observations").select("code,name_raw").eq("checkup_id",id)).data||[]).map(x=>x.code||x.name_raw));
+   const rows=keep.map(oi=>{const o=c.obs[oi],code=document.querySelector(`[data-s="${ci}-${oi}"]`).value||null;
+    return{...pick(o,["panel","hospital_code","name_raw","site","value_num","value_text","unit_raw","ref_text","ref_low","ref_high","flag_raw","comment"]),flag_source:["letter","arrow","color","none"].includes(o.flag_source)?o.flag_source:"none",code,person_id:pid,checkup_id:id,observed_on:c.date,source:"hospital"}}).filter(o=>!have.has(o.code||o.name_raw));
+   await ins("observations",rows);
+   await ins("reports",c.reports.map(p=>({...pick(p,["modality","body_part","reported_by","history","comparison","technique","findings","impression","assessment","recommendation","follow_up","summary_th","other_text"]),type:["imaging","ecg","dexa","other"].includes(p.type)?p.type:"other",person_id:pid,checkup_id:id})));
+   await ins("exam_findings",c.exam.map(p=>({system:p.system,result_text:p.result_text??null,person_id:pid,checkup_id:id})));
+   await ins("followups",[...document.querySelectorAll(`[data-f="${ci}"]:checked`)].map(el=>({title:c.fups[+el.dataset.i].title,note:c.fups[+el.dataset.i].note||null,due_date:document.querySelector(`[data-fd="${ci}-${el.dataset.i}"]`).value||null,person_id:pid,checkup_id:id})))}
+  for(const f of files){const s=await shrink(f),path=`${pid}/${crypto.randomUUID()}.${s.ext}`;
+   const u=await sb.storage.from("health-files").upload(path,s.b,{contentType:s.mime});if(u.error)throw u.error;
+   await ins("files",[{person_id:pid,checkup_id:first,path,kind:"original",mime:s.mime,size_bytes:s.b.size}])}
+  toast("บันทึกแล้ว");histView()
+ }catch(e){toast("บันทึกไม่สำเร็จ: "+(e.message||JSON.stringify(e))+"\nข้อมูลบางส่วนอาจถูกบันทึกไปแล้ว ตรวจที่หน้าข้อมูลย้อนหลัง");btn.disabled=false;btn.textContent="ยืนยันและบันทึก"}}
+async function histView(){
+ const r=await sb.from("checkups").select("id,checkup_date,hospital,department,observations(count),reports(count)").eq("person_id",S.person).order("checkup_date",{ascending:false});
+ const l=r.data||[];
+ shell(`<h2>ข้อมูลย้อนหลัง</h2>${r.error?`<p class="e">${esc(r.error.message)}</p>`:""}${l.length?l.map(c=>`<div class="card" data-id="${c.id}" style="cursor:pointer"><b>${fd(c.checkup_date)}</b> · ${esc(c.hospital)} ${esc(c.department)}<div class="m">ผล ${c.observations[0]?.count??0} รายการ · รายงาน ${c.reports[0]?.count??0}</div></div>`).join(""):`<p class="m">ยังไม่มีข้อมูล</p>`}`);
+ document.querySelectorAll("[data-id]").forEach(el=>el.onclick=()=>detail(el.dataset.id))}
+async function detail(id){
+ const[o,r,fl,c]=await Promise.all([sb.from("observations").select("*").eq("checkup_id",id).order("panel").order("name_raw"),sb.from("reports").select("*").eq("checkup_id",id),sb.from("files").select("id,path").eq("checkup_id",id),sb.from("checkups").select("checkup_date,hospital").eq("id",id).single()]);
+ shell(`<button class="g" id="bk">← กลับ</button><h2>${fd(c.data.checkup_date)} · ${esc(c.data.hospital)}</h2><div class="card sc"><table><tr><th>รายการ</th><th>ค่า</th><th>หน่วย</th><th>อ้างอิง</th></tr>${(o.data||[]).map(x=>`<tr><td>${esc(x.name_raw)}</td><td class="${x.flag_raw||""}">${esc(x.value_num??x.value_text)} ${esc(x.flag_raw)}</td><td>${esc(x.unit_raw)}</td><td>${esc((x.ref_text||"").replace(/^N\s*:?\s*/,""))}</td></tr>`).join("")}</table></div>${(r.data||[]).map(p=>`<div class="card"><b>${esc(p.modality||p.type)} ${esc(p.body_part||"")}</b><pre>${esc([p.findings&&"FINDINGS: "+p.findings,p.impression&&"IMPRESSION: "+p.impression,p.assessment,p.recommendation].filter(Boolean).join("\n\n"))}</pre></div>`).join("")}<div class="row">${(fl.data||[]).map((f,i)=>`<button class="g" data-p="${esc(f.path)}">ดูรูปต้นฉบับ ${i+1}</button>`).join("")}</div><button class="g" id="rm" style="margin-top:12px">ลบการตรวจครั้งนี้</button>`);
+ $("#bk").onclick=histView;
+ document.querySelectorAll("[data-p]").forEach(b=>b.onclick=async()=>{const s=await sb.storage.from("health-files").createSignedUrl(b.dataset.p,300);s.error?toast(s.error.message):window.open(s.data.signedUrl,"_blank")});
+ $("#rm").onclick=async()=>{if(!confirm("ลบการตรวจครั้งนี้พร้อมผลทั้งหมดและรูปต้นฉบับ? ย้อนกลับไม่ได้"))return;
+  const p=(fl.data||[]).map(f=>f.path);if(p.length)await sb.storage.from("health-files").remove(p);
+  await sb.from("files").delete().eq("checkup_id",id);const d=await sb.from("checkups").delete().eq("id",id);d.error?toast(d.error.message):histView()}}
+boot();
+</script>
+</body>
+</html>
