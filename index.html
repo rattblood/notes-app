@@ -99,7 +99,7 @@ async function load(){
  S.people=p.data||[];S.codes=c.data||[];
  if(!S.people.find(x=>x.id===S.person))S.person=(S.people.find(x=>x.account_id===u.id)||S.people[0])?.id}
 function shell(b){
- h(`<div class="w"><div class="row" style="margin-bottom:10px"><select id="ps">${S.people.map(p=>`<option value="${p.id}" ${p.id===S.person?"selected":""}>${esc(p.nickname)}</option>`).join("")}</select><button class="g" id="hm">หน้าแรก</button><button class="g" id="pw">เปลี่ยนรหัสผ่าน</button><button class="g" id="lo">ออก</button></div>${b}</div>`);
+ h(`<div class="w"><div class="row" style="margin-bottom:10px"><select id="ps">${S.people.map(p=>`<option value="${p.id}" ${p.id===S.person?"selected":""}>${esc(p.nickname)}</option>`).join("")}</select><button class="g" id="hm">หน้าแรก</button><button class="g" id="pw">เปลี่ยนรหัสผ่าน</button><button class="g" id="lo">ออก</button></div>${b}<p class="m" style="text-align:center;margin-top:18px">เวอร์ชัน 2026-11-12b</p></div>`);
  $("#ps").onchange=e=>{S.person=e.target.value;homeView()};$("#hm").onclick=homeView;$("#pw").onclick=()=>pwView(false);$("#lo").onclick=out}
 function homeView(){
  shell(`<div class="row"><button class="big" id="b1">ดูข้อมูลย้อนหลัง</button><button class="big" id="b2">นำเข้าข้อมูลใหม่</button></div><div class="row" style="margin-top:8px"><button class="big g" id="b3">โปรไฟล์สุขภาพ (โรคประจำตัว การแพ้ ยา วิตามิน)</button></div>`);
@@ -184,29 +184,45 @@ const PF={
  medications:["ยา / วิตามิน / อาหารเสริม",[["kind","ประเภท","s:prescription|ยาตามใบสั่ง,otc|ยาซื้อเอง,supplement|วิตามิน/อาหารเสริม,herbal|สมุนไพร"],["name","ชื่อ"],["dose_text","ขนาด"],["frequency_text","ความถี่"],["purpose","กินเพื่อ"],["start_date","วันเริ่ม","d"],["end_date","วันหยุด (ว่าง = ยังกินอยู่)","d"]],"sensitive"],
  person_refs:["ผู้ติดต่อฉุกเฉิน / ประกัน / เลขผู้ป่วย",[["kind","ชนิด","s:emergency_contact|ผู้ติดต่อฉุกเฉิน,insurance|ประกัน,hospital_id|เลขผู้ป่วย รพ.,other|อื่นๆ"],["label","ชื่อ/โรงพยาบาล"],["value","เบอร์/เลข"],["note","หมายเหตุ"]],"sensitive"]
 };
+const AT={conditions:"condition_id",medications:"medication_id"};
 const opt=t=>t.slice(2).split(",").map(o=>o.split("|"));
-const fi=(p,f)=>{const[k,l,t]=f,id=`${p}_${k}`;return`<div><label>${l}</label>`+(t&&t[0]==="s"?`<select id="${id}">${opt(t).map(([v,n])=>`<option value="${v}">${n}</option>`).join("")}</select>`:`<input id="${id}" type="${t==="n"?"number":t==="d"?"date":"text"}">`)+"</div>"};
+const fi=(p,f,v)=>{const[k,l,t]=f,id=`${p}_${k}`;return`<div><label>${l}</label>`+(t&&t[0]==="s"?`<select id="${id}">${opt(t).map(([o,n])=>`<option value="${o}" ${o===(v??"")?"selected":""}>${n}</option>`).join("")}</select>`:`<input id="${id}" type="${t==="n"?"number":t==="d"?"date":"text"}" value="${esc(v)}">`)+"</div>"};
+let ED=null,AP=null;
+async function openFile(path){const w=window.open("","_blank"),s=await sb.storage.from("health-files").createSignedUrl(path,300);if(s.error){if(w)w.close();return toast(s.error.message)}if(w)w.location=s.data.signedUrl;else window.open(s.data.signedUrl)}
+const vals=(t,pre)=>{const row={};for(const[k,,ty]of PF[t][1]){const v=$(`#${pre}_${k}`).value.trim();row[k]=v===""?null:ty==="n"?Number(v):v}return row};
 async function profileView(){
  const pid=S.person,tb=Object.keys(PF);
- const[pe,...rs]=await Promise.all([sb.from("people").select("birth_date,sex,blood_type").eq("id",pid).single(),...tb.map(t=>sb.from(t).select("*").eq("person_id",pid).order("created_at"))]);
- const d=pe.data||{};
+ const[pe,fl,...rs]=await Promise.all([sb.from("people").select("birth_date,sex,blood_type").eq("id",pid).single(),sb.from("files").select("id,path,condition_id,medication_id").eq("person_id",pid).or("condition_id.not.is.null,medication_id.not.is.null").order("created_at"),...tb.map(t=>sb.from(t).select("*").eq("person_id",pid).order("created_at"))]);
+ const d=pe.data||{},F=fl.data||[];
  let x=`<div class="card"><h2>ข้อมูลพื้นฐาน</h2><div class="row"><div><label>วันเกิด</label><input id="bd" type="date" value="${d.birth_date||""}"></div><div><label>เพศ</label><select id="sx">${[["","ไม่ระบุ"],["female","หญิง"],["male","ชาย"],["other","อื่นๆ"]].map(([v,n])=>`<option value="${v}" ${v===(d.sex||"")?"selected":""}>${n}</option>`).join("")}</select></div><div><label>หมู่เลือด</label><input id="bt" value="${esc(d.blood_type)}"></div></div><button id="sp">บันทึกข้อมูลพื้นฐาน</button></div>`;
- tb.forEach((t,i)=>{const[ti,fs]=PF[t],rows=rs[i].data||[];
+ if(fl.error)x+=`<div class="card bad e">แนบไฟล์ยังใช้ไม่ได้: ${esc(fl.error.message)} (ต้องรัน SQL เพิ่มคอลัมน์ในตาราง files ก่อน)</div>`;
+ tb.forEach((t,i)=>{const[ti,fs]=PF[t],rows=rs[i].data||[],ak=AT[t];
   x+=`<div class="card"><h2>${ti}</h2>${rs[i].error?`<p class="e">${esc(rs[i].error.message)}</p>`:""}`+(rows.length?rows.map(r=>{
+   if(ED&&ED.t===t&&ED.id===r.id)return`<div style="border-top:1px solid var(--ln);padding:6px 0"><div class="row">${fs.map(f=>fi("e",f,r[f[0]])).join("")}</div><div class="row"><button data-a="save" data-t="${t}" data-i="${r.id}" data-p="${r.tier}">บันทึกการแก้ไข</button><button class="g" data-a="cancel">ยกเลิก</button></div></div>`;
    const tx=fs.map(([k,,ty])=>{let v=r[k];if(v==null||v==="")return"";if(ty&&ty[0]==="s")v=(opt(ty).find(o=>o[0]===v)||[,v])[1];return esc(v)}).filter(Boolean).join(" · ");
-   const live=t==="medications"&&!r.end_date;
-   return`<div class="row" style="justify-content:space-between;border-top:1px solid var(--ln);padding:6px 0"><div style="flex:3">${r.tier==="private"?"🔒 ":""}${tx}${live?" · <b>ยังกินอยู่</b>":""}</div><div class="row" style="flex:2;justify-content:flex-end">${live?`<button class="g" data-a="stop" data-t="${t}" data-i="${r.id}">หยุดกิน</button>`:""}<button class="g" data-a="hide" data-t="${t}" data-i="${r.id}" data-p="${r.tier}">${r.tier==="private"?"แสดง":"ซ่อน"}</button><button class="g" data-a="del" data-t="${t}" data-i="${r.id}">ลบ</button></div></div>`}).join(""):`<p class="m">ยังไม่มีข้อมูล</p>`)+
+   const live=t==="medications"&&!r.end_date,af=ak?F.filter(f=>f[ak]===r.id):[];
+   return`<div style="border-top:1px solid var(--ln);padding:6px 0"><div class="row" style="justify-content:space-between"><div style="flex:3">${r.tier==="private"?"🔒 ":""}${tx}${live?" · <b>ยังกินอยู่</b>":""}</div><div class="row" style="flex:2;justify-content:flex-end">${live?`<button class="g" data-a="stop" data-t="${t}" data-i="${r.id}">หยุดกิน</button>`:""}<button class="g" data-a="edit" data-t="${t}" data-i="${r.id}">แก้ไข</button>${ak?`<button class="g" data-a="att" data-t="${t}" data-i="${r.id}" data-p="${r.tier}">แนบรูป</button>`:""}<button class="g" data-a="hide" data-t="${t}" data-i="${r.id}" data-p="${r.tier}">${r.tier==="private"?"แสดง":"ซ่อน"}</button><button class="g" data-a="del" data-t="${t}" data-i="${r.id}">ลบ</button></div></div>${af.length?`<div class="row" style="justify-content:flex-start;margin-top:4px">${af.map((f,n)=>`<span style="flex:none"><button class="g" style="width:auto;padding:4px 10px" data-a="view" data-p="${esc(f.path)}">📎 ${n+1}</button><button class="g" style="width:auto;padding:4px 8px" data-a="rmf" data-i="${f.id}" data-p="${esc(f.path)}">✕</button></span>`).join("")}</div>`:""}</div>`}).join(""):`<p class="m">ยังไม่มีข้อมูล</p>`)+
   `<details><summary>+ เพิ่ม</summary><div class="row">${fs.map(f=>fi(t,f)).join("")}</div><button data-a="add" data-t="${t}">บันทึก</button></details></div>`});
- shell(x+`<p class="m">ซ่อน = เห็นเฉพาะเจ้าของข้อมูล คนอื่นจะไม่เห็นรายการนั้น</p>`);
+ shell(x+`<p class="m">ซ่อน = เห็นเฉพาะเจ้าของข้อมูล คนอื่นจะไม่เห็นรายการนั้นและไฟล์ที่แนบ</p><input id="fa" type="file" multiple accept="image/*,application/pdf" style="display:none">`);
  $("#sp").onclick=async()=>{const r=await sb.from("people").update({birth_date:$("#bd").value||null,sex:$("#sx").value||null,blood_type:$("#bt").value.trim()||null}).eq("id",pid).select("id");toast(r.error?r.error.message:!(r.data||[]).length?"ไม่มีสิทธิ์แก้ข้อมูลของคนนี้":"บันทึกแล้ว")};
+ $("#fa").onchange=async e=>{const fs=[...e.target.files];if(!fs.length||!AP)return;const{t,id,p}=AP;AP=null;
+  try{for(const f of fs){const s=await shrink(f),path=`${pid}/${crypto.randomUUID()}.${s.ext}`;const u=await sb.storage.from("health-files").upload(path,s.b,{contentType:s.mime});if(u.error)throw u.error;await ins("files",[{person_id:pid,path,kind:"document",mime:s.mime,size_bytes:s.b.size,tier:p,[AT[t]]:id}])}profileView()}
+  catch(er){toast("แนบไม่สำเร็จ: "+(er.message||JSON.stringify(er)))}};
  document.querySelectorAll("[data-a]").forEach(b=>b.onclick=async()=>{
   const{a,t,i,p}=b.dataset;let r;
-  if(a==="add"){const row={person_id:pid};for(const[k,,ty]of PF[t][1]){const v=$(`#${t}_${k}`).value.trim();row[k]=v===""?null:ty==="n"?Number(v):v}
-   if(t==="person_refs")row.tier=row.kind==="emergency_contact"?"general":"sensitive";
-   r=await sb.from(t).insert(row)}
-  else if(a==="del"){if(!confirm("ลบรายการนี้?"))return;r=await sb.from(t).delete().eq("id",i).select("id")}
+  if(a==="view")return openFile(p);
+  if(a==="edit"){ED={t,id:i};return profileView()}
+  if(a==="cancel"){ED=null;return profileView()}
+  if(a==="att"){AP={t,id:i,p};return $("#fa").click()}
+  if(a==="rmf"){if(!confirm("ลบไฟล์นี้?"))return;r=await sb.from("files").delete().eq("id",i).select("id");if(!r.error&&(r.data||[]).length)await sb.storage.from("health-files").remove([p])}
+  else if(a==="add"){const row={person_id:pid,...vals(t,t)};if(t==="person_refs")row.tier=row.kind==="emergency_contact"?"general":"sensitive";r=await sb.from(t).insert(row)}
+  else if(a==="save"){const row=vals(t,"e");if(t==="person_refs"&&p!=="private")row.tier=row.kind==="emergency_contact"?"general":"sensitive";r=await sb.from(t).update(row).eq("id",i).select("id");if(!r.error&&(r.data||[]).length)ED=null}
+  else if(a==="del"){if(!confirm("ลบรายการนี้และไฟล์ที่แนบ?"))return;
+   const q=AT[t]?(await sb.from("files").select("id,path").eq(AT[t],i)).data||[]:[];
+   r=await sb.from(t).delete().eq("id",i).select("id");
+   if(!r.error&&(r.data||[]).length&&q.length){await sb.storage.from("health-files").remove(q.map(f=>f.path));await sb.from("files").delete().in("id",q.map(f=>f.id))}}
   else if(a==="stop")r=await sb.from(t).update({end_date:new Date().toLocaleDateString("sv")}).eq("id",i).select("id");
-  else r=await sb.from(t).update({tier:p==="private"?PF[t][2]:"private"}).eq("id",i).select("id");
+  else{const nt=p==="private"?PF[t][2]:"private";r=await sb.from(t).update({tier:nt}).eq("id",i).select("id");if(!r.error&&(r.data||[]).length&&AT[t])await sb.from("files").update({tier:nt}).eq(AT[t],i)}
   if(!r.error&&a!=="add"&&!(r.data||[]).length)return toast("ไม่มีสิทธิ์แก้ไขรายการนี้");
   r.error?toast(r.error.message):profileView()})}
 boot();
