@@ -25,6 +25,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:4px;borde
 .sc{overflow-x:auto}.H{color:var(--hi);font-weight:600}.L{color:var(--lo);font-weight:600}
 textarea{min-height:150px;font:12px ui-monospace,monospace}
 pre{white-space:pre-wrap;margin:4px 0}label{display:block;font-size:13px;color:var(--mut)}
+.cal{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}.cd{border:1px solid var(--ln);border-radius:8px;min-height:50px;padding:3px;cursor:pointer;font-size:13px}.cd i{display:inline-block;width:8px;height:8px;border-radius:50%;margin:1px}
 :focus-visible{outline:2px solid var(--ac);outline-offset:2px}
 </style>
 </head>
@@ -99,11 +100,11 @@ async function load(){
  S.people=p.data||[];S.codes=c.data||[];
  if(!S.people.find(x=>x.id===S.person))S.person=(S.people.find(x=>x.account_id===u.id)||S.people[0])?.id}
 function shell(b){
- h(`<div class="w"><div class="row" style="margin-bottom:10px"><select id="ps">${S.people.map(p=>`<option value="${p.id}" ${p.id===S.person?"selected":""}>${esc(p.nickname)}</option>`).join("")}</select><button class="g" id="hm">หน้าแรก</button><button class="g" id="pw">เปลี่ยนรหัสผ่าน</button><button class="g" id="lo">ออก</button></div>${b}<p class="m" style="text-align:center;margin-top:18px">เวอร์ชัน 2026-11-12d</p></div>`);
+ h(`<div class="w"><div class="row" style="margin-bottom:10px"><select id="ps">${S.people.map(p=>`<option value="${p.id}" ${p.id===S.person?"selected":""}>${esc(p.nickname)}</option>`).join("")}</select><button class="g" id="hm">หน้าแรก</button><button class="g" id="pw">เปลี่ยนรหัสผ่าน</button><button class="g" id="lo">ออก</button></div>${b}<p class="m" style="text-align:center;margin-top:18px">เวอร์ชัน 2026-11-14a</p></div>`);
  $("#ps").onchange=e=>{S.person=e.target.value;homeView()};$("#hm").onclick=homeView;$("#pw").onclick=()=>pwView(false);$("#lo").onclick=out}
 function homeView(){
- shell(`<div class="row"><button class="big" id="b1">ดูข้อมูลย้อนหลัง</button><button class="big" id="b2">นำเข้าข้อมูลใหม่</button></div><div class="row" style="margin-top:8px"><button class="big g" id="b3">โปรไฟล์สุขภาพ (โรคประจำตัว การแพ้ ยา วิตามิน)</button></div>`);
- $("#b1").onclick=histView;$("#b2").onclick=importView;$("#b3").onclick=profileView}
+ shell(`<div class="row"><button class="big" id="b1">ดูข้อมูลย้อนหลัง</button><button class="big" id="b2">นำเข้าข้อมูลใหม่</button></div><div class="row" style="margin-top:8px"><button class="big g" id="b3">โปรไฟล์สุขภาพ</button><button class="big g" id="b4">ปฏิทิน ประจำเดือน / อาการ</button></div>`);
+ $("#b1").onclick=histView;$("#b2").onclick=importView;$("#b3").onclick=profileView;$("#b4").onclick=calView}
 let I={};
 async function importView(){
  const{data:hs}=await sb.from("checkups").select("hospital").eq("person_id",S.person).limit(300);
@@ -229,6 +230,53 @@ async function profileView(){
   else{const nt=p==="private"?PF[t][2]:"private";r=await sb.from(t).update({tier:nt}).eq("id",i).select("id");if(!r.error&&(r.data||[]).length&&AT[t])await sb.from("files").update({tier:nt}).eq(AT[t],i)}
   if(!r.error&&a!=="add"&&!(r.data||[]).length)return toast("ไม่มีสิทธิ์แก้ไขรายการนี้");
   r.error?toast(r.error.message):profileView()})}
+
+const WD=["อา","จ","อ","พ","พฤ","ศ","ส"],COL=["#b3402b","#2b5fa6","#7a4fa3","#1d7a4d","#c47a00","#555555"];
+const ld=t=>new Date(t).toLocaleDateString("sv",{timeZone:"Asia/Bangkok"}),lt=t=>new Date(t).toLocaleTimeString("sv",{timeZone:"Asia/Bangkok",hour:"2-digit",minute:"2-digit"});
+const addD=(d,n)=>{const x=new Date(d+"T00:00:00Z");x.setUTCDate(x.getUTCDate()+n);return x.toISOString().slice(0,10)};
+const dif=(a,b)=>Math.round((new Date(a+"T00:00:00Z")-new Date(b+"T00:00:00Z"))/864e5);
+const avg=a=>a.reduce((x,y)=>x+y,0)/a.length;
+let CAL={ym:null,sel:null};
+async function calView(){
+ const pid=S.person,R=await Promise.all([sb.from("people").select("modules").eq("id",pid).single(),sb.from("cycle_events").select("*").eq("person_id",pid).order("start_date"),sb.from("symptom_types").select("*").eq("person_id",pid).order("created_at"),sb.from("symptom_logs").select("*").eq("person_id",pid).order("started_at")]);
+ const er=R.find(r=>r.error);if(er)return shell(`<div class="card bad e">${esc(er.error.message)}</div>`);
+ const[pe,cy,sy,sl]=R,on=!!(pe.data?.modules||{}).cycle,P=cy.data||[],T=sy.data||[],L=sl.data||[],t0=new Date().toLocaleDateString("sv");
+ CAL.ym=CAL.ym||t0.slice(0,7);CAL.sel=CAL.sel||t0;
+ const[Y,M]=CAL.ym.split("-").map(Number),pend=p=>p.end_date||(dif(t0,p.start_date)<=9?t0:p.start_date),pd=new Set(),sd={};
+ P.forEach(p=>{for(let d=p.start_date;d<=pend(p);d=addD(d,1))pd.add(d)});
+ L.forEach(l=>{const a=ld(l.started_at),n=Math.min(l.ended_at?dif(ld(l.ended_at),a):0,14),c=(T.find(x=>x.id===l.type_id)||{}).color||"#2b5fa6";for(let k=0;k<=n;k++)(sd[addD(a,k)]=sd[addD(a,k)]||new Set()).add(c)});
+ const first=new Date(Date.UTC(Y,M-1,1)).getUTCDay(),dim=new Date(Date.UTC(Y,M,0)).getUTCDate();
+ let g=WD.map(w=>`<div class="m" style="text-align:center">${w}</div>`).join("")+"<div></div>".repeat(first);
+ for(let d=1;d<=dim;d++){const ds=`${Y}-${String(M).padStart(2,"0")}-${String(d).padStart(2,"0")}`;g+=`<div class="cd" data-d="${ds}" style="${pd.has(ds)?"background:var(--his);":""}${ds===CAL.sel?"outline:2px solid var(--ac);":""}">${d}${ds===t0?" •":""}<div>${[...(sd[ds]||[])].map(c=>`<i style="background:${c}"></i>`).join("")}</div></div>`}
+ const sel=CAL.sel,dayP=P.filter(p=>sel>=p.start_date&&sel<=pend(p)),dayL=L.filter(l=>sel>=ld(l.started_at)&&sel<=(l.ended_at?ld(l.ended_at):ld(l.started_at))),op=[...P].reverse().find(p=>!p.end_date);
+ const tn=id=>(T.find(x=>x.id===id)||{}).name||"อาการ",bt=(c,i,t)=>`<button class="g" style="width:auto;padding:4px 10px" data-c="${c}" data-i="${i}">${t}</button>`;
+ let pn=`<div class="card"><h2>${fd(sel)}</h2>`+(on?`<div class="row"><button data-c="pstart">+ ประจำเดือนมา (วันที่เลือก)</button>${op?`<button class="g" data-c="pend" data-i="${op.id}">ประจำเดือนหมดแล้ว (วันที่เลือก)</button>`:""}</div>`+dayP.map(p=>`<p class="m">ช่วงประจำเดือน ${fd(p.start_date)} - ${p.end_date?fd(p.end_date):"ยังไม่หมด"} ${bt("pdel",p.id,"ลบ")}</p>`).join(""):"")+
+  dayL.map(l=>`<div style="border-top:1px solid var(--ln);padding:6px 0"><b>${esc(tn(l.type_id))}</b> · ความรุนแรง ${l.severity??"-"}/10 · ${lt(l.started_at)}${l.ended_at?` ถึง ${fd(ld(l.ended_at))} ${lt(l.ended_at)}`:" · ยังไม่หาย"}<div class="m">${esc([l.medication_text&&"ยา: "+l.medication_text,l.triggers&&"ตัวกระตุ้น: "+l.triggers,l.note].filter(Boolean).join(" · "))}</div>${l.ended_at?"":bt("lend",l.id,"หายแล้ว")} ${bt("ldel",l.id,"ลบ")}</div>`).join("")+
+  `<details><summary>+ บันทึกอาการวันที่เลือก</summary>${T.length?`<div class="row"><div><label>ชนิดอาการ</label><select id="lty">${T.map(x=>`<option value="${x.id}">${esc(x.name)}</option>`).join("")}</select></div><div><label>ความรุนแรง (1-10)</label><select id="lsv"><option value="">ไม่ระบุ</option>${[1,2,3,4,5,6,7,8,9,10].map(n=>`<option>${n}</option>`).join("")}</select></div><div><label>เวลาเริ่ม</label><input id="lst" type="time"></div></div><div class="row"><div><label>หายวันที่ (พ.ศ. ว่าง = ยังไม่หาย)</label>${dinp('id="led"',"")}</div><div><label>เวลาหาย</label><input id="let" type="time"></div></div><div class="row"><div><label>ยาที่ใช้</label><input id="lm"></div><div><label>ตัวกระตุ้น</label><input id="ltr"></div><div><label>หมายเหตุ</label><input id="lnt"></div></div><button data-c="ladd">บันทึกอาการ</button>`:`<p class="m">ยังไม่มีชนิดอาการ เพิ่มด้านล่างก่อน (เช่น ไมเกรน)</p>`}</details></div>`;
+ const mo={};L.forEach(l=>{const d=ld(l.started_at),o=mo[d.slice(0,7)]=mo[d.slice(0,7)]||{d:new Set(),n:0,s:[],m:new Set()};o.d.add(d);o.n++;if(l.severity)o.s.push(l.severity);if(l.medication_text)o.m.add(d)});
+ const st=P.map(p=>p.start_date).sort(),gp=st.slice(-7).map((d,i,a)=>i?dif(d,a[i-1]):0).filter(Boolean),bk={"1-5":0,"6-14":0,"15-28":0,"29+":0,"ไม่ทราบ":0};
+ if(on)L.forEach(l=>{const d=ld(l.started_at),s=[...st].reverse().find(x=>x<=d),n=s?dif(d,s)+1:99;bk[n>60?"ไม่ทราบ":n<=5?"1-5":n<=14?"6-14":n<=28?"15-28":"29+"]++});
+ const ms=Object.keys(mo).sort().reverse().slice(0,6);
+ shell(`<div class="card"><label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="cyc" ${on?"checked":""}> ติดตามประจำเดือนของคนนี้</label><p class="m">ข้อมูลหมวดนี้เป็นส่วนตัว เห็นเฉพาะเจ้าของ (หรือผู้ดูแลที่ได้รับสิทธิ์)</p></div><div class="card"><div class="row"><button class="g" id="pv">‹</button><b style="flex:3;text-align:center">${new Date(Date.UTC(Y,M-1,1)).toLocaleDateString("th-TH",{month:"long",year:"numeric",timeZone:"UTC"})}</b><button class="g" id="nx">›</button></div><div class="cal">${g}</div></div>${pn}
+ <div class="card"><h2>ชนิดอาการ</h2>${T.map(x=>`<span style="display:inline-block;margin:2px 8px 2px 0"><i style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${esc(x.color||"#2b5fa6")}"></i> ${esc(x.name)} ${bt("tdel",x.id,"ลบ")}</span>`).join("")}<div class="row"><input id="tn" placeholder="ชื่ออาการใหม่ เช่น ไมเกรน"><select id="tc">${COL.map(c=>`<option value="${c}" style="color:${c}">● ${c}</option>`).join("")}</select><button data-c="tadd">เพิ่ม</button></div></div>
+ <div class="card"><h2>สรุปรายเดือน</h2>${ms.length?`<div class="sc"><table><tr><th>เดือน</th><th>วันที่มีอาการ</th><th>ครั้ง</th><th>ความรุนแรงเฉลี่ย</th><th>วันที่ใช้ยา</th></tr>${ms.map(m=>{const o=mo[m];return`<tr><td>${toBe(m+"-01").slice(3)}</td><td>${o.d.size}</td><td>${o.n}</td><td>${o.s.length?avg(o.s).toFixed(1):"-"}</td><td>${o.m.size}</td></tr>`}).join("")}</table></div>`:`<p class="m">ยังไม่มีบันทึกอาการ</p>`}${on?`<p class="m">ประจำเดือนล่าสุด ${st.length?fd(st[st.length-1]):"-"} · รอบเฉลี่ย ${gp.length?Math.round(avg(gp))+" วัน":"-"} (จากที่จดไว้)</p><p class="m">อาการเกิดในวันที่ของรอบ: ${Object.entries(bk).map(([k,v])=>k+" = "+v).join(" · ")}</p>`:""}<p class="m">สรุปจากข้อมูลที่จดเอง ใช้ประกอบการคุยกับแพทย์ ไม่ใช่การวินิจฉัย</p></div>`);
+ const mv=n=>{const x=new Date(Date.UTC(Y,M-1+n,1));CAL.ym=x.toISOString().slice(0,7);CAL.sel=CAL.ym+"-01";calView()};
+ $("#pv").onclick=()=>mv(-1);$("#nx").onclick=()=>mv(1);
+ document.querySelectorAll(".cd").forEach(el=>el.onclick=()=>{CAL.sel=el.dataset.d;calView()});
+ $("#cyc").onchange=async e=>{const r=await sb.from("people").update({modules:{...(pe.data?.modules||{}),cycle:e.target.checked}}).eq("id",pid).select("id");r.error?toast(r.error.message):!(r.data||[]).length?toast("ไม่มีสิทธิ์แก้ไข"):calView()};
+ document.querySelectorAll("[data-c]").forEach(b=>b.onclick=async()=>{
+  const c=b.dataset.c,i=b.dataset.i;let r;
+  try{
+   if(c==="pstart")r=await sb.from("cycle_events").insert({person_id:pid,start_date:CAL.sel});
+   else if(c==="pend")r=await sb.from("cycle_events").update({end_date:CAL.sel}).eq("id",i).select("id");
+   else if(c==="pdel"||c==="ldel"||c==="tdel"){if(!confirm("ลบรายการนี้?"))return;r=await sb.from({pdel:"cycle_events",ldel:"symptom_logs",tdel:"symptom_types"}[c]).delete().eq("id",i).select("id")}
+   else if(c==="lend")r=await sb.from("symptom_logs").update({ended_at:new Date().toISOString()}).eq("id",i).select("id");
+   else if(c==="tadd"){const n=$("#tn").value.trim();if(!n)return toast("ใส่ชื่ออาการก่อน");r=await sb.from("symptom_types").insert({person_id:pid,name:n,color:$("#tc").value})}
+   else{const ed=toIso($("#led").value),row={person_id:pid,type_id:$("#lty").value,started_at:`${CAL.sel}T${$("#lst").value||"00:00"}:00+07:00`,ended_at:ed?`${ed}T${$("#let").value||"00:00"}:00+07:00`:null,severity:+$("#lsv").value||null,medication_text:$("#lm").value.trim()||null,triggers:$("#ltr").value.trim()||null,note:$("#lnt").value.trim()||null};
+    if(row.ended_at&&row.ended_at<row.started_at)return toast("เวลาที่หายต้องหลังเวลาเริ่ม");r=await sb.from("symptom_logs").insert(row)}
+  }catch(e){return toast(e.message)}
+  if(!r.error&&!["pstart","tadd","ladd"].includes(c)&&!(r.data||[]).length)return toast("ไม่มีสิทธิ์แก้ไขรายการนี้");
+  r.error?toast(r.error.message):calView()})}
 boot();
 </script>
 </body>
