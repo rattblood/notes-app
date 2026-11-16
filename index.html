@@ -26,6 +26,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:4px;borde
 textarea{min-height:150px;font:12px ui-monospace,monospace}
 pre{white-space:pre-wrap;margin:4px 0}label{display:block;font-size:13px;color:var(--mut)}
 .cal{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}.cd{border:1px solid var(--ln);border-radius:8px;min-height:50px;padding:3px;cursor:pointer;font-size:13px}.cd i{display:inline-block;width:8px;height:8px;border-radius:50%;margin:1px}
+.dt{background:var(--bg);border-radius:8px;padding:8px;margin-top:6px}
 :focus-visible{outline:2px solid var(--ac);outline-offset:2px}
 </style>
 </head>
@@ -96,15 +97,15 @@ function challengeView(id){
  $("#go").onclick=async()=>{const{error}=await sb.auth.mfa.challengeAndVerify({factorId:id,code:$("#cd").value.trim()});error?$("#er").textContent="รหัสไม่ถูกต้อง":boot()};$("#lo").onclick=out}
 async function load(){
  const u=(await sb.auth.getUser()).data.user;
- const[p,c]=await Promise.all([sb.from("people").select("id,nickname,account_id").order("nickname"),sb.from("test_codes").select("code,name_en,std_unit").order("category").order("code")]);
+ const[p,c]=await Promise.all([sb.from("people").select("id,nickname,account_id").order("nickname"),sb.from("test_codes").select("code,name_en,std_unit,category").order("category").order("code")]);
  S.people=p.data||[];S.codes=c.data||[];
  if(!S.people.find(x=>x.id===S.person))S.person=(S.people.find(x=>x.account_id===u.id)||S.people[0])?.id}
 function shell(b){
- h(`<div class="w"><div class="row" style="margin-bottom:10px"><select id="ps">${S.people.map(p=>`<option value="${p.id}" ${p.id===S.person?"selected":""}>${esc(p.nickname)}</option>`).join("")}</select><button class="g" id="hm">หน้าแรก</button><button class="g" id="pw">เปลี่ยนรหัสผ่าน</button><button class="g" id="lo">ออก</button></div>${b}<p class="m" style="text-align:center;margin-top:18px">เวอร์ชัน 2026-11-14c</p></div>`);
+ h(`<div class="w"><div class="row" style="margin-bottom:10px"><select id="ps">${S.people.map(p=>`<option value="${p.id}" ${p.id===S.person?"selected":""}>${esc(p.nickname)}</option>`).join("")}</select><button class="g" id="hm">หน้าแรก</button><button class="g" id="pw">เปลี่ยนรหัสผ่าน</button><button class="g" id="lo">ออก</button></div>${b}<p class="m" style="text-align:center;margin-top:18px">เวอร์ชัน 2026-11-14d</p></div>`);
  $("#ps").onchange=e=>{S.person=e.target.value;homeView()};$("#hm").onclick=homeView;$("#pw").onclick=()=>pwView(false);$("#lo").onclick=out}
 function homeView(){
- shell(`<div class="row"><button class="big" id="b1">ดูข้อมูลย้อนหลัง</button><button class="big" id="b2">นำเข้าข้อมูลใหม่</button></div><div class="row" style="margin-top:8px"><button class="big g" id="b3">โปรไฟล์สุขภาพ</button><button class="big g" id="b4">ปฏิทิน ประจำเดือน / อาการ</button></div>`);
- $("#b1").onclick=histView;$("#b2").onclick=importView;$("#b3").onclick=profileView;$("#b4").onclick=calView}
+ shell(`<div class="row"><button class="big" id="b1">ดูข้อมูลย้อนหลัง</button><button class="big" id="b2">นำเข้าข้อมูลใหม่</button></div><div class="row" style="margin-top:8px"><button class="big g" id="b3">โปรไฟล์สุขภาพ</button><button class="big g" id="b4">ปฏิทิน ประจำเดือน / อาการ</button></div><div class="row" style="margin-top:8px"><button class="big g" id="b5">เปรียบเทียบผลตรวจ</button><button class="big g" id="b6">สำรองข้อมูล</button></div>`);
+ $("#b1").onclick=histView;$("#b2").onclick=importView;$("#b3").onclick=profileView;$("#b4").onclick=calView;$("#b5").onclick=cmpView;$("#b6").onclick=bkView}
 let I={};
 async function importView(){
  const{data:hs}=await sb.from("checkups").select("hospital").eq("person_id",S.person).limit(300);
@@ -292,6 +293,49 @@ async function calView(){
   }catch(e){return toast(e.message)}
   if(!r.error&&!(c==="qp"||c==="tadd"||(c==="lsave"&&!i))&&!(r.data||[]).length)return toast("ไม่มีสิทธิ์แก้ไขรายการนี้");
   if(r.error)return toast(r.error.message);CAL.form=CAL.edl=CAL.pe=null;calView()})}
+
+const CATL={cbc:"เม็ดเลือด",chem:"เคมีเลือด",iron:"ธาตุเหล็ก",hormone:"ฮอร์โมน",vitamin:"วิตามิน",tumor:"สารบ่งชี้มะเร็ง",urine:"ปัสสาวะ",vital:"สัญญาณชีพ",dexa:"กระดูก",inflam:"การอักเสบ"};
+const nu=u=>(u||"").toLowerCase().replace(/[µμ]/g,"u").replace(/[\s*x]/g,"").replace("10^3","10³").replace("10^6","10⁶").replace(/^k\//,"10³/").replace(/\/mm(\^?3|³)/,"/ul");
+async function allRows(q){let a=[],f=0;for(;;){const r=await q().range(f,f+999);if(r.error)throw r.error;a=a.concat(r.data);if(r.data.length<1000)break;f+=1000}return a}
+const spark=p=>{if(p.length<2)return"";const W=300,H=60,vs=p.map(x=>x.v),mn=Math.min(...vs),sp=(Math.max(...vs)-mn)||1,X=i=>10+i*(W-20)/(p.length-1),Y=v=>H-8-(v-mn)/sp*(H-16);return`<svg viewBox="0 0 ${W} ${H}" width="100%" height="60"><polyline fill="none" stroke="var(--mut)" stroke-width="1.5" points="${p.map((q,i)=>X(i)+","+Y(q.v)).join(" ")}"/>${p.map((q,i)=>`<circle cx="${X(i)}" cy="${Y(q.v)}" r="${q.sel?5:3}" fill="${q.sel?"var(--ac)":"var(--mut)"}"/>`).join("")}</svg>`};
+let CMP={a:null,b:null,cat:"",q:"",open:{}};
+async function cmpView(){
+ const pid=S.person;let ck,ob,cv;
+ try{[ck,ob,cv]=await Promise.all([allRows(()=>sb.from("checkups").select("id,checkup_date,hospital").eq("person_id",pid).order("checkup_date",{ascending:false}).order("id")),allRows(()=>sb.from("observations").select("checkup_id,code,name_raw,value_num,value_text,unit_raw,ref_text,flag_raw").eq("person_id",pid).order("id")),allRows(()=>sb.from("unit_conversions").select("*").order("code").order("from_unit"))])}catch(e){return shell(`<div class="card bad e">${esc(e.message||JSON.stringify(e))}</div>`)}
+ if(ck.length<2)return shell(`<div class="card"><h2>เปรียบเทียบผลตรวจ</h2><p class="m">ต้องมีผลตรวจอย่างน้อย 2 ครั้งของคนนี้ (ตอนนี้มี ${ck.length} ครั้ง)</p></div>`);
+ if(!ck.find(c=>c.id===CMP.a))CMP.a=ck[0].id;if(!ck.find(c=>c.id===CMP.b)||CMP.b===CMP.a)CMP.b=(ck.find(c=>c.id!==CMP.a)||ck[1]).id;
+ const cm={},sd={};cv.forEach(c=>cm[c.code+"|"+nu(c.from_unit)]=c);S.codes.forEach(c=>sd[c.code]=c);
+ const conv=o=>{if(o.value_num==null)return{u:o.unit_raw};const s=sd[o.code];if(!s||!s.std_unit||nu(s.std_unit)===nu(o.unit_raw))return{v:o.value_num,u:o.unit_raw||(s&&s.std_unit)};const c=cm[o.code+"|"+nu(o.unit_raw)];return c?{v:o.value_num*c.factor+c.add_offset,u:s.std_unit,c:1}:{v:o.value_num,u:o.unit_raw,x:1}};
+ const G={};ob.forEach(o=>{const k=o.code||"n:"+(o.name_raw||"").toLowerCase().trim(),g=G[k]=G[k]||{k,n:o.code?(sd[o.code]?.name_en||o.code):o.name_raw,cat:o.code?(sd[o.code]?.category||""):"",by:{}};if(!g.by[o.checkup_id])g.by[o.checkup_id]={...o,...conv(o)}});
+ const ct=g=>g.cat||"_",cats=[...new Set(Object.values(G).map(ct))].sort(),ql=CMP.q.toLowerCase();
+ const rows=Object.values(G).filter(g=>(g.by[CMP.a]||g.by[CMP.b])&&(!CMP.cat||ct(g)===CMP.cat)&&(!ql||g.n.toLowerCase().includes(ql)||g.k.toLowerCase().includes(ql))).sort((x,y)=>(x.cat||"~").localeCompare(y.cat||"~")||String(x.n).localeCompare(String(y.n)));
+ const val=o=>o.v!=null?+o.v.toPrecision(5):esc(o.value_text),cell=o=>!o?`<span class="m">-</span>`:`<span class="${o.flag_raw||""}">${val(o)}${o.c?"*":""}${o.flag_raw?" "+o.flag_raw:""}</span>${o.x?`<br><small class="m">${esc(o.u)}</small>`:""}`;
+ const chg=(a,b)=>{if(!a||!b||a.v==null||b.v==null||nu(a.u)!==nu(b.u))return"-";const d=a.v-b.v;return(d>0?"▲ ":d<0?"▼ ":"= ")+(d?Math.abs(+d.toPrecision(3)):"")};
+ const det=g=>{const od=[...ck].reverse().filter(c=>g.by[c.id]),u0=nu((g.by[CMP.a]||g.by[CMP.b]).u);return`<div class="dt">${spark(od.filter(c=>g.by[c.id].v!=null&&nu(g.by[c.id].u)===u0).map(c=>({v:g.by[c.id].v,sel:c.id===CMP.a||c.id===CMP.b})))}<table>${od.map(c=>{const o=g.by[c.id];return`<tr><td>${fd(c.checkup_date)} · ${esc(c.hospital)}</td><td class="${o.flag_raw||""}">${val(o)} ${esc(o.u)}${o.c?"*":""}</td><td>${esc((o.ref_text||"").replace(/^N\s*:?\s*/,"").replace(/^\((.*)\)$/,"$1"))}</td></tr>`}).join("")}</table><p class="m">* แปลงเป็นหน่วยมาตรฐานแล้ว</p></div>`};
+ const co=sel=>ck.map(c=>`<option value="${c.id}" ${c.id===sel?"selected":""}>${fd(c.checkup_date)} · ${esc(c.hospital)}</option>`).join(""),A=ck.find(c=>c.id===CMP.a),B=ck.find(c=>c.id===CMP.b);
+ shell(`<h2>เปรียบเทียบผลตรวจ</h2><div class="card"><div class="row"><div><label>ผลหลัก</label><select id="ca">${co(CMP.a)}</select></div><div><label>เทียบกับ</label><select id="cb">${co(CMP.b)}</select></div></div><div class="row"><button class="g" id="cq1">ครั้งก่อนหน้า</button><button class="g" id="cq2">ปีที่แล้ว</button><button class="g" id="cq3">สลับ ⇄</button></div></div><div class="card"><div class="row"><input id="cs" placeholder="ค้นหารายการ" value="${esc(CMP.q)}"><select id="cc"><option value="">ทุกหมวด</option>${cats.map(c=>`<option value="${c}" ${c===CMP.cat?"selected":""}>${c==="_"?"อื่นๆ":CATL[c]||c}</option>`).join("")}</select></div></div><div class="card sc"><table><tr><th>รายการ</th><th>${fd(B.checkup_date)}</th><th>${fd(A.checkup_date)}</th><th>เปลี่ยน</th></tr>${rows.map(g=>`<tr data-k="${esc(g.k)}" style="cursor:pointer"><td>${esc(g.n)}<br><small class="m">${esc((g.by[CMP.a]||g.by[CMP.b]).u||"")}</small></td><td>${cell(g.by[CMP.b])}</td><td>${cell(g.by[CMP.a])}</td><td>${chg(g.by[CMP.a],g.by[CMP.b])}</td></tr>`+(CMP.open[g.k]?`<tr><td colspan="4">${det(g)}</td></tr>`:"")).join("")||`<tr><td colspan="4" class="m">ไม่พบรายการ</td></tr>`}</table></div><p class="m">แตะแถวเพื่อดูแนวโน้มทุกครั้ง ธง H/L ตามที่กระดาษระบุ หน่วยที่ต่างกันและแปลงไม่ได้จะแสดงหน่วยเดิมและไม่เทียบตัวเลข</p>`);
+ $("#ca").onchange=e=>{CMP.a=e.target.value;cmpView()};$("#cb").onchange=e=>{CMP.b=e.target.value;cmpView()};
+ $("#cq1").onclick=()=>{const i=ck.findIndex(c=>c.id===CMP.a);if(ck[i+1]){CMP.b=ck[i+1].id;cmpView()}else toast("ไม่มีครั้งก่อนหน้านี้")};
+ $("#cq2").onclick=()=>{const t=new Date(addD(A.checkup_date,-365)).getTime();let best=null,bd=1e18;ck.forEach(c=>{const d=Math.abs(new Date(c.checkup_date)-t);if(c.id!==A.id&&d<bd){bd=d;best=c}});CMP.b=best.id;cmpView()};
+ $("#cq3").onclick=()=>{[CMP.a,CMP.b]=[CMP.b,CMP.a];cmpView()};
+ $("#cs").onchange=e=>{CMP.q=e.target.value.trim();cmpView()};$("#cc").onchange=e=>{CMP.cat=e.target.value;cmpView()};
+ document.querySelectorAll("tr[data-k]").forEach(r=>r.onclick=()=>{CMP.open[r.dataset.k]=!CMP.open[r.dataset.k];cmpView()})}
+const crcT=(()=>{const t=[];for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c>>>0}return t})();
+const crc=u=>{let c=-1;for(let i=0;i<u.length;i++)c=crcT[(c^u[i])&255]^(c>>>8);return(c^-1)>>>0};
+function zip(fs){const enc=new TextEncoder(),P=[],C=[],le=(n,b)=>{const a=new Uint8Array(b);for(let i=0;i<b;i++)a[i]=(n>>>(8*i))&255;return a};let off=0;
+ for(const f of fs){const nm=enc.encode(f.name),c=crc(f.data),z=f.data.length,h=[le(0x04034b50,4),le(20,2),le(0x0800,2),le(0,2),le(0,2),le(0x21,2),le(c,4),le(z,4),le(z,4),le(nm.length,2),le(0,2),nm];P.push(...h,f.data);
+  C.push([le(0x02014b50,4),le(20,2),le(20,2),le(0x0800,2),le(0,2),le(0,2),le(0x21,2),le(c,4),le(z,4),le(z,4),le(nm.length,2),le(0,2),le(0,2),le(0,2),le(0,2),le(0,4),le(off,4),nm]);off+=h.reduce((a,x)=>a+x.length,0)+z}
+ let cl=0;C.forEach(r=>r.forEach(x=>{P.push(x);cl+=x.length}));P.push(le(0x06054b50,4),le(0,2),le(0,2),le(fs.length,2),le(fs.length,2),le(cl,4),le(off,4),le(0,2));return new Blob(P,{type:"application/zip"})}
+function bkView(){shell(`<div class="card"><h2>สำรองข้อมูล</h2><p class="m">ดาวน์โหลดเป็นไฟล์ .zip ประกอบด้วยข้อมูลทั้งหมด (data.json) และรูป/เอกสารต้นฉบับ เฉพาะส่วนที่บัญชีนี้มีสิทธิ์เห็น ไฟล์ไม่ได้เข้ารหัส เก็บไว้ในที่ปลอดภัยเท่านั้น (ไม่ใช่ที่สาธารณะหรือแชตกลุ่ม)</p><button id="k1">สำรองของคนที่เลือก</button><button class="g" id="k2">สำรองทุกคนที่บัญชีนี้เห็นได้</button><p class="m" id="ks"></p></div>`);$("#k1").onclick=()=>backup([S.person]);$("#k2").onclick=()=>backup(S.people.map(p=>p.id))}
+async function backup(ids){const st=m=>{$("#ks").textContent=m};
+ try{const fl=[],enc=new TextEncoder(),TB=["checkups","observations","reports","exam_findings","followups","conditions","allergies","medications","person_refs","cycle_events","symptom_types","symptom_logs","files"];
+  for(const pid of ids){const p=S.people.find(x=>x.id===pid)||{nickname:pid},dir=p.nickname+"/";st("กำลังรวบรวม "+p.nickname);
+   const out={exported_at:new Date().toISOString(),person:(await sb.from("people").select("*").eq("id",pid).single()).data};
+   for(const t of TB)out[t]=await allRows(()=>sb.from(t).select("*").eq("person_id",pid).order("id"));
+   let n=0;for(const f of out.files){st(`กำลังดาวน์โหลดไฟล์ของ ${p.nickname} ${++n}/${out.files.length}`);const d=await sb.storage.from("health-files").download(f.path);if(d.error)throw d.error;f.zip_name=`files/${n}_${f.path.split("/").pop()}`;fl.push({name:dir+f.zip_name,data:new Uint8Array(await d.data.arrayBuffer())})}
+   fl.push({name:dir+"data.json",data:enc.encode(JSON.stringify(out,null,1))})}
+  const a=document.createElement("a");a.href=URL.createObjectURL(zip(fl));a.download=`backup-${new Date().toLocaleDateString("sv")}.zip`;a.click();st("เสร็จแล้ว ตรวจไฟล์ที่ดาวน์โหลดและเก็บไว้ในที่ปลอดภัย")}
+ catch(e){st("ไม่สำเร็จ: "+(e.message||JSON.stringify(e)))}}
 boot();
 </script>
 </body>
